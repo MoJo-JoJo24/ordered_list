@@ -1,19 +1,18 @@
 #ifndef __ORDEREDLIST_HPP__
 #define __ORDEREDLIST_HPP__
-#include <mutex>        // std::mutex, std::lock_guard
 #include <shared_mutex>        // std::mutex, std::lock_guard
 #include <functional> // std::funciton<()>
-//#include <condition_variable> //mutable std::condition_variable_any
 #include <semaphore.h>
-//#include <atomic>
+
 
 template <class T>
 struct ListNode {
-    T &val;
-    volatile ListNode *next;
+    T *val;
+    ListNode *next;
     ListNode() : val(), next(nullptr) {}
-    ListNode(T &x) : val(x), next(nullptr) {}
-    ListNode(T &x, ListNode *next) : val(x), next(next) {}
+    ListNode(T *x) : val(x), next(nullptr) {}
+    ListNode(T *x, ListNode *next) : val(x), next(next) {}
+    mutable std::shared_mutex m_rwmutex;
  };
 
 
@@ -23,6 +22,14 @@ class QuickPushOrderedList;
 template <class T>
 class QuickPopOrderedList; 
 
+/*
+* This is an implementation of a singly linked list with node-level locks to
+* ensure mutual exclusion. 
+* The structure looks like this: head_ -> node_0 -> node_1 -> ... -> node_n 
+* Note that head_ is a dummy node.
+*/
+
+
 template <class T>
 class OrderedList
 {
@@ -30,34 +37,29 @@ class OrderedList
         OrderedList() = delete;
         OrderedList(std::function<int(const T*, const T*)> cmp_func_);
         virtual ~OrderedList();
-        virtual T &Pop();
-        virtual void Push(T &data_);
+        virtual T *Pop();
+        virtual void Push(T *data_);
       
-        int SearchNodePosition(T *data_);
-        volatile ListNode<T> *AccessNodeAt(int position_);
-        std::function<int(const T*, const T*)> GetComp();
-        std::mutex *GetMutex();
-        std::shared_mutex *GetSharedSearchMutex();
-        std::shared_mutex *GetSharedInsertMutex();
         sem_t *GetSemaphore();
-        volatile ListNode<T> *Begin();
-        void SetBegin(volatile ListNode<T> *new_node_);
+        ListNode<T> *GetBegin();
     private:
+        int SearchNodePosition(T *data_);
         std::function<int(const T*, const T*)> m_cmp_func_;
-        mutable std::mutex m_mutex;
+        ListNode<T> *m_head;
         mutable sem_t m_sem;
-        volatile ListNode<T> *m_head;
-        mutable std::shared_mutex m_shared_search_mutex;
-        mutable std::shared_mutex m_shared_insert_mutex;
+
+        
+
 
 };
 
+////////////////////////////////////////////////////////////////////////////////
 ////////// Implementations ////////////////////////////////////////////////////
 
 
 template <class T>
 OrderedList<T>::OrderedList(std::function<int(const T*, const T*)> cmp_func_) 
-: m_cmp_func_(cmp_func_), m_head(nullptr)
+: m_cmp_func_(cmp_func_), m_head(new ListNode<T>())
 {
     sem_init(&m_sem, 0, 0);
 }
@@ -65,160 +67,163 @@ OrderedList<T>::OrderedList(std::function<int(const T*, const T*)> cmp_func_)
 template <class T>
 OrderedList<T>::~OrderedList()
 {
-    volatile ListNode<T> *holding_ptr = m_head;
+    ListNode<T> *holding_ptr = m_head;
     while (nullptr != holding_ptr) //iterate and delete until arriving at the tail
     {
-        volatile ListNode<T> *tmp = holding_ptr;
+        ListNode<T> *tmp = holding_ptr;
         holding_ptr = holding_ptr->next;
         delete tmp;
     }
     sem_destroy(&m_sem);
 }
 
+/*
+* Insert a node with value data_.
+*
+* To ensure mutual exclusion, the locks of the current node and the
+* previous nodes must be acquired for insertion to work. As soon as the
+* locks are acquired the code does the following:
+*
+*      | prev -> node | prev -> node | prev    node |
+*      |              |          ^   |   v      ^   |
+*      |   new_node   |   new_node   |   new_node   |
+*/
+
 template <class T>
-T &OrderedList<T>::Pop()
+void OrderedList<T>::Push(T *data_)
+{
+    int position = SearchNodePosition(data_);
+    ListNode<T>* new_node = new ListNode<T>(data_);
+
+    ListNode<T> *prev = m_head;
+    std::unique_lock<std::shared_mutex> prev_lock(prev->m_rwmutex);
+    ListNode<T> *curr = prev->next;
+    std::unique_lock<std::shared_mutex> curr_lock;
+    if (curr)
+    {
+        curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
+    }
+
+    if (0 != position)
+    {
+        for (int i = 0; i < position - 1 && curr != nullptr; ++i) 
+        {
+            prev = curr;
+            curr = curr->next;
+            prev_lock.swap(curr_lock);
+            if (curr)
+            {
+                curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
+            }
+        }
+    }
+    new_node->next = curr;
+    prev->next = new_node;    
+    
+    sem_post(&m_sem); 
+}
+
+/*
+* Pop the node at position.
+*
+* To ensure mutual exclusion, follow the steps from insert(). As soon as
+* the locks are acquired the code does roughly the following:
+*
+*    (*)     (*)            (*)     (*)            (*)
+*  | prev -> node -> next | prev    node -> next | prev ---------> next |
+*  |                      |   v--------------^   |                      |
+*
+* (*) highlights the nodes whose locks are acquired.
+*/
+
+template <class T>
+T *OrderedList<T>::Pop()
 {
     sem_wait(&m_sem);
 
     int position = SearchNodePosition(nullptr);
-    volatile ListNode<T>* prev = AccessNodeAt(position - 1);
 
-    std::unique_lock<std::shared_mutex> shared_lock1(m_shared_search_mutex);
-    std::unique_lock<std::shared_mutex> shared_lock2(m_shared_insert_mutex);
-
-    volatile ListNode<T>* holding_ptr = m_head;
-
-    T *data = &holding_ptr->val;
-    if (!prev)
+    ListNode<T> *prev = m_head;
+    std::unique_lock<std::shared_mutex> prev_lock(prev->m_rwmutex);
+    ListNode<T> *curr = prev->next;
+    std::unique_lock<std::shared_mutex> curr_lock;
+    if (curr)
     {
-        m_head = m_head->next;
+        curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
     }
-    else
+    if (0 != position)
     {
-        holding_ptr = prev->next;
-        data = &holding_ptr->val;
-        prev->next = holding_ptr->next;
+        for (int i = 0; i < position - 1 && curr != nullptr; ++i) 
+        {
+            prev = curr;
+            curr = curr->next;
+            prev_lock.swap(curr_lock);
+            if (curr)
+            {
+                curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
+            }
+        }
+    }
+    if (nullptr == curr)
+    {
+        return nullptr;
     }
 
-    delete holding_ptr;
+    T *data = curr->val;
+    prev->next = curr->next;  
+    curr_lock.unlock();
+    delete curr;
 
-    return *data;
+    return data;
 }
 
-template <class T>
-void OrderedList<T>::Push(T &data_)
-{
-    volatile ListNode<T>* new_node = new ListNode<T>(data_);
-    int position = SearchNodePosition(&new_node->val);
-    volatile ListNode<T>* prev = AccessNodeAt(position - 1);
-
-    std::shared_lock<std::shared_mutex> shared_lock(m_shared_insert_mutex);    
-    std::unique_lock<std::mutex> lock(m_mutex);
-
-    if (!prev)
-    {
-        new_node->next = m_head;
-        m_head = new_node;
-    }
-    else
-    {
-        new_node->next = prev->next;
-        prev->next = new_node;
-    }
-
-    sem_post(&m_sem);
-}
-
-////////// auxilary functions //////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////// auxilary function ///////////////////////////////////////////////////
 
 template <class T>
 int OrderedList<T>::SearchNodePosition(T *data_)
 {
-    
-    std::shared_lock<std::shared_mutex> lock(m_shared_search_mutex);
-    volatile ListNode<T> *curr = m_head;
+    ListNode<T> *curr = m_head;
+    std::shared_lock<std::shared_mutex> read_lock(curr->m_rwmutex);
     T *tmp = data_;
     int position = 0;
     int index = nullptr == data_ ? 0 : 1;
     
     while (curr)
     {
-        if (0 > m_cmp_func_(tmp, &curr->val))
+        if (0 > m_cmp_func_(tmp, curr->val))
         {
             if (nullptr == data_)
             {
-                tmp = &curr->val;
+                tmp = curr->val;
             }
             position = index;
 
         }
         ++index;
         curr = curr->next;
+        if (curr)
+        {
+            read_lock = std::shared_lock<std::shared_mutex>(curr->m_rwmutex);
+        }
     }
 
     return position;
 }
 
-template <class T>
-volatile ListNode<T> *OrderedList<T>::AccessNodeAt(int position_)
-{
-    if (0 > position_)
-    {
-        return nullptr;
-    }
-    
-    volatile ListNode<T> *curr = m_head;
-    for (int i = 0; i < position_; ++i)
-    {
-        #ifndef NDEBUG
-        if (!curr)
-        {
-            throw std::runtime_error("Access position is out of bounds"); 
-        }
-        #endif
-        curr = curr->next;
-    }
+////////////////////////////////////////////////////////////////////////////////
+////////// Geters  /////////////////////////////////////////////////////////////
 
-    return curr;
-}
-
-
-////////// Geters and Seters ///////////////////////////////////////////////////
-
-
-template <class T>
-std::function<int(const T*, const T*)> OrderedList<T>::GetComp()
-{
-    return m_cmp_func_;
-}
-template <class T>
-std::mutex *OrderedList<T>::GetMutex()
-{
-    return &m_mutex;
-}
-template <class T>
-std::shared_mutex *OrderedList<T>::GetSharedSearchMutex()
-{
-    return &m_shared_search_mutex;
-}
-template <class T>
-std::shared_mutex *OrderedList<T>::GetSharedInsertMutex()
-{
-    return &m_shared_insert_mutex;
-}
 template <class T>
 sem_t *OrderedList<T>::GetSemaphore()
 {
     return &m_sem;
 }
+
 template <class T>
-volatile ListNode<T> *OrderedList<T>::Begin()
+ListNode<T> *OrderedList<T>::GetBegin()
 {
     return m_head;
 }
-template <class T>
-void OrderedList<T>::SetBegin(volatile ListNode<T> *new_node_)
-{
-    m_head = new_node_;
-}
+
 #endif /* __ORDEREDLIST_HPP__ */

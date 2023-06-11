@@ -26,7 +26,7 @@ std::chrono::nanoseconds MeasurePushPerformanceTime(OrderedList<T> *list, size_t
     for (size_t i = 0; i < size; ++i)
     {
         auto start = std::chrono::high_resolution_clock::now();
-        list->Push(array[i]);
+        list->Push(&array[i]);
         auto end = std::chrono::high_resolution_clock::now();
         sum_result += std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     }
@@ -62,8 +62,7 @@ inline int Compare(const int* a, const int* b)
     {
         return -1;
     }
-    else
-    if (nullptr == b)
+    else if (nullptr == b)
     {
         return 1;
     }
