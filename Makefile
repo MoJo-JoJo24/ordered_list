@@ -6,11 +6,11 @@ PROJECTSRC = src/testtools.cpp test/ordered_list_tests.cpp
 remove_list = -f $(wildcard ./*.o) $(wildcard ./*.d) $(wildcard *.so) $(wildcard *.elf) $(wildcard vgcore.*) $(wildcard *.out)
 
 
-project_debug : $(PROJECTSRC) 
-	$(CC) $(GDFLAGS) $(INCLUDE) $^ -pthread -o ordered_list_tests.out 
+efficiency_test.out : src/testtools.cpp test/efficiency_test.cpp
+	$(CC) $(GCFLAGS) $(INCLUDE) $^ -pthread -o $@
 
-project_release : $(PROJECTSRC) 
-	$(CC) $(GCFLAGS) $(INCLUDE) $^ -pthread -o ordered_list_tests.out
+functional_test.out : src/testtools.cpp test/functional_test.cpp
+	$(CC) $(GCFLAGS) $(INCLUDE) $^ -pthread -o $@
 
 .PHONY : clean
 clean :
