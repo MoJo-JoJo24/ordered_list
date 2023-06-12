@@ -37,12 +37,12 @@ void QuickPushOrderedList<T>::Push(T *data_)
     ListNode<T>* new_node = new ListNode<T>(data_);
 
     ListNode<T> *prev = this->GetBegin();
-    std::unique_lock<std::shared_mutex> prev_lock(prev->m_rwmutex);
+    WRITE_LOCK prev_lock(prev->m_rwmutex);
     ListNode<T> *curr = prev->next;
-    std::unique_lock<std::shared_mutex> curr_lock;
+    WRITE_LOCK curr_lock;
     if (curr)
     {
-        curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
+        curr_lock = WRITE_LOCK(curr->m_rwmutex);
     }
 
     new_node->next = curr;

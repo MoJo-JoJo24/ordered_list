@@ -4,6 +4,8 @@
 #include <functional> // std::funciton<()>
 #include <semaphore.h>
 
+typedef std::unique_lock<std::shared_mutex> WRITE_LOCK;
+typedef std::shared_lock<std::shared_mutex> READ_LOCK;
 
 template <class T>
 struct ListNode {
@@ -43,6 +45,8 @@ class OrderedList
         sem_t *GetSemaphore();
         ListNode<T> *GetBegin();
     private:
+        void AccessNodeAt(int position, ListNode<T> **prev, ListNode<T> **curr, 
+                                  WRITE_LOCK *prev_lock, WRITE_LOCK *curr_lock);
         int SearchNodePosition(T *data_);
         std::function<int(const T*, const T*)> m_cmp_func_;
         ListNode<T> *m_head;
@@ -96,30 +100,19 @@ void OrderedList<T>::Push(T *data_)
     ListNode<T>* new_node = new ListNode<T>(data_);
 
     ListNode<T> *prev = m_head;
-    std::unique_lock<std::shared_mutex> prev_lock(prev->m_rwmutex);
+    WRITE_LOCK prev_lock(prev->m_rwmutex);
     ListNode<T> *curr = prev->next;
-    std::unique_lock<std::shared_mutex> curr_lock;
+    WRITE_LOCK curr_lock;
     if (curr)
     {
-        curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
+        curr_lock = WRITE_LOCK(curr->m_rwmutex);
     }
 
-    if (0 != position)
-    {
-        for (int i = 0; i < position - 1 && curr != nullptr; ++i) 
-        {
-            prev = curr;
-            curr = curr->next;
-            prev_lock.swap(curr_lock);
-            if (curr)
-            {
-                curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
-            }
-        }
-    }
+    AccessNodeAt(position - 1, &prev, &curr, &prev_lock, &curr_lock);
+
     new_node->next = curr;
     prev->next = new_node;    
-    
+
     sem_post(&m_sem); 
 }
 
@@ -144,26 +137,16 @@ T *OrderedList<T>::Pop()
     int position = SearchNodePosition(nullptr);
 
     ListNode<T> *prev = m_head;
-    std::unique_lock<std::shared_mutex> prev_lock(prev->m_rwmutex);
+    WRITE_LOCK prev_lock(prev->m_rwmutex);
     ListNode<T> *curr = prev->next;
-    std::unique_lock<std::shared_mutex> curr_lock;
+    WRITE_LOCK curr_lock;
     if (curr)
     {
-        curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
+        curr_lock = WRITE_LOCK(curr->m_rwmutex);
     }
-    if (0 != position)
-    {
-        for (int i = 0; i < position - 1 && curr != nullptr; ++i) 
-        {
-            prev = curr;
-            curr = curr->next;
-            prev_lock.swap(curr_lock);
-            if (curr)
-            {
-                curr_lock = std::unique_lock<std::shared_mutex>(curr->m_rwmutex);
-            }
-        }
-    }
+
+    AccessNodeAt(position - 1, &prev, &curr, &prev_lock, &curr_lock);
+
     if (nullptr == curr)
     {
         return nullptr;
@@ -184,7 +167,7 @@ template <class T>
 int OrderedList<T>::SearchNodePosition(T *data_)
 {
     ListNode<T> *curr = m_head;
-    std::shared_lock<std::shared_mutex> read_lock(curr->m_rwmutex);
+    READ_LOCK read_lock(curr->m_rwmutex);
     T *tmp = data_;
     int position = 0;
     int index = nullptr == data_ ? 0 : 1;
@@ -204,11 +187,30 @@ int OrderedList<T>::SearchNodePosition(T *data_)
         curr = curr->next;
         if (curr)
         {
-            read_lock = std::shared_lock<std::shared_mutex>(curr->m_rwmutex);
+            read_lock = READ_LOCK(curr->m_rwmutex);
         }
     }
 
     return position;
+}
+
+template <class T>
+void OrderedList<T>::AccessNodeAt(int position, ListNode<T> **prev, 
+               ListNode<T> **curr, WRITE_LOCK *prev_lock, WRITE_LOCK *curr_lock)
+{
+    if (0 < position)
+    {
+        for (int i = 0; i < position && *curr != nullptr; ++i) 
+        {
+            *prev = *curr;
+            *curr = (*curr)->next;
+            (*prev_lock).swap(*curr_lock);
+            if (*curr)
+            {
+                *curr_lock = WRITE_LOCK((*curr)->m_rwmutex);
+            }
+        }
+    }      
 }
 
 ////////////////////////////////////////////////////////////////////////////////

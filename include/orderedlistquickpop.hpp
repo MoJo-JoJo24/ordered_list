@@ -31,9 +31,9 @@ T* QuickPopOrderedList<T>::Pop()
     sem_wait(this->GetSemaphore());
 
     ListNode<T> *prev = this->GetBegin();
-    std::unique_lock<std::shared_mutex> prev_lock(prev->m_rwmutex);
+    WRITE_LOCK prev_lock(prev->m_rwmutex);
     ListNode<T> *curr = prev->next;
-    std::unique_lock<std::shared_mutex> curr_lock(curr->m_rwmutex);
+    WRITE_LOCK curr_lock(curr->m_rwmutex);
 
     T *data = curr->val;
     prev->next = curr->next;  
