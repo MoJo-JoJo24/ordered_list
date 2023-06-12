@@ -46,7 +46,7 @@ class OrderedList
         ListNode<T> *GetBegin();
     private:
         void AccessNodeAt(int position, ListNode<T> **prev, ListNode<T> **curr, 
-                                  WRITE_LOCK *prev_lock, WRITE_LOCK *curr_lock);
+                          WRITE_LOCK *prev_lock, WRITE_LOCK *curr_lock);
         int SearchNodePosition(T *data_);
         std::function<int(const T*, const T*)> m_cmp_func_;
         ListNode<T> *m_head;
@@ -196,7 +196,8 @@ int OrderedList<T>::SearchNodePosition(T *data_)
 
 template <class T>
 void OrderedList<T>::AccessNodeAt(int position, ListNode<T> **prev, 
-               ListNode<T> **curr, WRITE_LOCK *prev_lock, WRITE_LOCK *curr_lock)
+                                  ListNode<T> **curr, WRITE_LOCK *prev_lock, 
+                                  WRITE_LOCK *curr_lock)
 {
     if (0 < position)
     {
