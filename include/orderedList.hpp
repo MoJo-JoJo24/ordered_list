@@ -78,10 +78,10 @@ OrderedList<T>::~OrderedList()
 }
 
 /*
-* Insert a node with value data_.
+* push a node with value data_.
 *
 * To ensure mutual exclusion, the locks of the current node and the
-* previous nodes must be acquired for insertion to work. As soon as the
+* previous nodes must be acquired for push to work. As soon as the
 * locks are acquired the code does the following:
 *
 *      | prev -> node | prev -> node | prev    node |
