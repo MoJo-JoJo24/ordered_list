@@ -9,8 +9,6 @@ static int LIST = 2;
 static int POP = 1;
 static int PUSH = 0;
 
-static double EPSILON = 0.6;
-
 void ThreadSafetyTest(OrderedList<int> &list, int pop_)
 {    
     int arr[10000] = {0};
