@@ -27,8 +27,7 @@ class QuickPopOrderedList;
 /*
 * This is an implementation of a singly linked list with node-level locks to
 * ensure mutual exclusion. 
-* The structure looks like this: head_ -> node_0 -> node_1 -> ... -> node_n 
-* Note that head_ is a dummy node.
+* Note that m_head is a dummy node.
 */
 
 
@@ -51,9 +50,6 @@ class OrderedList
         std::function<int(const T*, const T*)> m_cmp_func_;
         ListNode<T> *m_head;
         mutable sem_t m_sem;
-
-        
-
 
 };
 
